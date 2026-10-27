@@ -1,0 +1,174 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Check-in Parenting</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f1f5f9;
+      margin: 0;
+      padding: 20px;
+      color: #1e293b;
+    }
+    .card {
+      max-width: 520px;
+      margin: auto;
+      padding: 22px;
+      background: white;
+      border-radius: 18px;
+      box-shadow: 0 4px 18px #0001;
+    }
+    h1 { text-align: center; font-size: 24px; }
+    p { text-align: center; color: #64748b; }
+    #reader { width: 100%; margin: 20px auto; }
+    #hasil {
+      padding: 15px;
+      margin-top: 15px;
+      border-radius: 10px;
+      background: #f1f5f9;
+      overflow-wrap: anywhere;
+    }
+    .sukses { background: #dcfce7 !important; color: #166534; }
+    .gagal { background: #fee2e2 !important; color: #991b1b; }
+    button {
+      width: 100%;
+      padding: 13px;
+      border: 0;
+      border-radius: 10px;
+      background: #2563eb;
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:disabled { background: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Check-in Parenting</h1>
+    <p>Arahkan QR tiket ke kamera laptop.</p>
+    <div id="reader"></div>
+    <button id="mulai">Mulai Scan QR</button>
+    <div id="hasil">Kamera belum dijalankan.</div>
+  </div>
+
+<script>
+const API_URL = 'https://script.google.com/macros/s/AKfycbzPWCHs4LljV6tAbToDMu-YS9koet76E2wBXrXWrBSkHwooxuCK0X1zI5sO3qWcMDnARA/exec';
+
+const tombol = document.getElementById('mulai');
+const hasil = document.getElementById('hasil');
+let scanner = null;
+let sedangProses = false;
+
+function tampil(pesan, kelas = '') {
+  hasil.className = kelas;
+  hasil.textContent = pesan;
+}
+
+function kirimKode(kode) {
+  if (sedangProses) return;
+  sedangProses = true;
+  tampil('Memeriksa tiket...');
+
+  const callback = 'hasilAPI' + Date.now();
+
+  window[callback] = function(data) {
+    delete window[callback];
+    script.remove();
+    sedangProses = false;
+
+    if (data.ok) {
+      tampil(
+        '✅ ' + data.pesan +
+        '\nNama: ' + data.nama +
+        '\nKelas: ' + data.kelas,
+        'sukses'
+      );
+      if (scanner) scanner.pause(true);
+      tombol.textContent = 'Scan Peserta Berikutnya';
+      tombol.disabled = false;
+    } else {
+      tampil(
+        '⚠️ ' + data.pesan +
+        (data.nama ? '\nNama: ' + data.nama : '') +
+        (data.kelas ? '\nKelas: ' + data.kelas : ''),
+        'gagal'
+      );
+      if (scanner) scanner.pause(true);
+      tombol.textContent = 'Coba Scan Lagi';
+      tombol.disabled = false;
+    }
+  };
+
+  const script = document.createElement('script');
+  script.src = API_URL +
+    '?callback=' + callback +
+    '&kode=' + encodeURIComponent(kode);
+  script.onerror = function() {
+    delete window[callback];
+    script.remove();
+    sedangProses = false;
+    tampil('Koneksi API gagal. Periksa internet dan deployment.', 'gagal');
+    tombol.disabled = false;
+    tombol.textContent = 'Coba Scan Lagi';
+  };
+  document.body.appendChild(script);
+}
+
+async function mulaiScanner() {
+  tombol.disabled = true;
+  tampil('Meminta akses kamera...');
+
+  try {
+    if (!scanner) {
+      scanner = new Html5Qrcode('reader');
+    }
+
+    await scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      (teks) => {
+        if (!sedangProses) {
+          scanner.pause(true);
+          kirimKode(teks.trim());
+        }
+      },
+      () => {}
+    );
+
+    tombol.textContent = 'Kamera Aktif';
+    tampil('Kamera aktif. Arahkan ke QR tiket.');
+  } catch (err) {
+    tampil('Kamera tidak bisa dibuka: ' + err +
+      '\nPastikan memakai HTTPS dan izinkan kamera di browser.', 'gagal');
+    tombol.disabled = false;
+    tombol.textContent = 'Mulai Scan QR';
+  }
+}
+
+tombol.addEventListener('click', async () => {
+  if (scanner && scanner.isScanning) {
+    try { await scanner.stop(); } catch (e) {}
+    tombol.textContent = 'Mulai Scan QR';
+    tampil('Kamera dihentikan.');
+    tombol.disabled = false;
+    return;
+  }
+
+  if (scanner && scanner.getState() === 2) {
+    try { scanner.resume(); } catch (e) {}
+    tombol.disabled = true;
+    tombol.textContent = 'Kamera Aktif';
+    tampil('Kamera aktif. Arahkan ke QR tiket.');
+    return;
+  }
+
+  await mulaiScanner();
+});
+</script>
+</body>
+</html>

@@ -30,6 +30,7 @@
       margin-top: 15px;
       border-radius: 10px;
       background: #f1f5f9;
+      white-space: pre-line;
       overflow-wrap: anywhere;
     }
     .sukses { background: #dcfce7 !important; color: #166534; }
@@ -57,12 +58,15 @@
   </div>
 
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbzPWCHs4LljV6tAbToDMu-YS9koet76E2wBXrXWrBSkHwooxuCK0X1zI5sO3qWcMDnARA/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbxaMH866l_KhgRiNxyZNubJTPRZb84i6_FupiluhO1V3EulMUKqklR4pq8L3BD0Ix2S/exec';
 
 const tombol = document.getElementById('mulai');
 const hasil = document.getElementById('hasil');
+
 let scanner = null;
 let sedangProses = false;
+let kameraAktif = false;
+let kodeTerakhir = '';
 
 function tampil(pesan, kelas = '') {
   hasil.className = kelas;
@@ -71,51 +75,88 @@ function tampil(pesan, kelas = '') {
 
 function kirimKode(kode) {
   if (sedangProses) return;
+
   sedangProses = true;
   tampil('Memeriksa tiket...');
 
-  const callback = 'hasilAPI' + Date.now();
+  const callback = 'hasilAPI_' + Date.now();
 
-  window[callback] = function(data) {
+  let selesai = false;
+  const script = document.createElement('script');
+
+  const timer = setTimeout(() => {
+    beres({
+      sukses: false,
+      pesan: 'Server tidak merespons. Periksa URL deployment.'
+    });
+  }, 15000);
+
+  function beres(data) {
+    if (selesai) return;
+    selesai = true;
+
+    clearTimeout(timer);
     delete window[callback];
     script.remove();
-    sedangProses = false;
 
-    if (data.ok) {
+    if (data.sukses) {
       tampil(
-        '✅ ' + data.pesan +
-        '\nNama: ' + data.nama +
-        '\nKelas: ' + data.kelas,
+        '✅ CHECK-IN BERHASIL!' +
+        '\nNama: ' + (data.nama || '-') +
+        '\nKelas: ' + (data.kelas || '-') +
+        '\nUrutan Scan: ' + (data.urutan || '-') +
+        '\nWaktu: ' + (data.waktu || '-'),
         'sukses'
       );
-      if (scanner) scanner.pause(true);
-      tombol.textContent = 'Scan Peserta Berikutnya';
-      tombol.disabled = false;
     } else {
       tampil(
-        '⚠️ ' + data.pesan +
+        '⚠️ ' + (data.pesan || 'Check-in gagal.') +
         (data.nama ? '\nNama: ' + data.nama : '') +
         (data.kelas ? '\nKelas: ' + data.kelas : ''),
         'gagal'
       );
-      if (scanner) scanner.pause(true);
-      tombol.textContent = 'Coba Scan Lagi';
-      tombol.disabled = false;
     }
+
+    setTimeout(() => {
+      sedangProses = false;
+      kodeTerakhir = '';
+
+      if (kameraAktif && scanner) {
+        try {
+          scanner.resume();
+          tombol.textContent = 'Kamera Aktif — Scan Berikutnya';
+          tombol.disabled = true;
+          tampil(
+            (data.sukses ? '✅ Check-in tersimpan.' : 'Scan selesai.') +
+            '\nKamera siap untuk peserta berikutnya.'
+          );
+        } catch (e) {
+          tombol.disabled = false;
+          tombol.textContent = 'Mulai Scan QR';
+          tampil('Klik Mulai Scan QR untuk melanjutkan.');
+        }
+      } else {
+        tombol.disabled = false;
+        tombol.textContent = 'Mulai Scan QR';
+      }
+    }, 1800);
+  }
+
+  window[callback] = beres;
+
+  script.onerror = () => {
+    beres({
+      sukses: false,
+      pesan: 'Gagal menghubungi Apps Script. Periksa URL dan deployment.'
+    });
   };
 
-  const script = document.createElement('script');
   script.src = API_URL +
-    '?callback=' + callback +
-    '&kode=' + encodeURIComponent(kode);
-  script.onerror = function() {
-    delete window[callback];
-    script.remove();
-    sedangProses = false;
-    tampil('Koneksi API gagal. Periksa internet dan deployment.', 'gagal');
-    tombol.disabled = false;
-    tombol.textContent = 'Coba Scan Lagi';
-  };
+    '?action=catat' +
+    '&callback=' + encodeURIComponent(callback) +
+    '&kode=' + encodeURIComponent(kode) +
+    '&t=' + Date.now();
+
   document.body.appendChild(script);
 }
 
@@ -132,38 +173,41 @@ async function mulaiScanner() {
       { facingMode: 'environment' },
       { fps: 10, qrbox: { width: 250, height: 250 } },
       (teks) => {
-        if (!sedangProses) {
-          scanner.pause(true);
-          kirimKode(teks.trim());
-        }
+        if (sedangProses || teks.trim() === kodeTerakhir) return;
+
+        kodeTerakhir = teks.trim();
+        scanner.pause(true);
+        kirimKode(kodeTerakhir);
       },
       () => {}
     );
 
-    tombol.textContent = 'Kamera Aktif';
+    kameraAktif = true;
+    tombol.textContent = 'Kamera Aktif — Scan Berikutnya';
     tampil('Kamera aktif. Arahkan ke QR tiket.');
   } catch (err) {
-    tampil('Kamera tidak bisa dibuka: ' + err +
-      '\nPastikan memakai HTTPS dan izinkan kamera di browser.', 'gagal');
+    kameraAktif = false;
+    tampil(
+      'Kamera tidak bisa dibuka: ' + err +
+      '\nPastikan memakai HTTPS dan izinkan kamera di browser.',
+      'gagal'
+    );
     tombol.disabled = false;
     tombol.textContent = 'Mulai Scan QR';
   }
 }
 
 tombol.addEventListener('click', async () => {
-  if (scanner && scanner.isScanning) {
-    try { await scanner.stop(); } catch (e) {}
-    tombol.textContent = 'Mulai Scan QR';
-    tampil('Kamera dihentikan.');
-    tombol.disabled = false;
-    return;
-  }
-
-  if (scanner && scanner.getState() === 2) {
-    try { scanner.resume(); } catch (e) {}
-    tombol.disabled = true;
-    tombol.textContent = 'Kamera Aktif';
-    tampil('Kamera aktif. Arahkan ke QR tiket.');
+  if (kameraAktif && scanner) {
+    try {
+      await scanner.stop();
+      kameraAktif = false;
+      tombol.disabled = false;
+      tombol.textContent = 'Mulai Scan QR';
+      tampil('Kamera dihentikan.');
+    } catch (e) {
+      tampil('Kamera tidak dapat dihentikan: ' + e, 'gagal');
+    }
     return;
   }
 
